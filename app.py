@@ -346,16 +346,16 @@ def classify():
         return redirect(url_for('login'))
 
     # Gather Image Limits
-    limit = requests.get("https://s3-ap-southeast-1.amazonaws.com/rblwg/images/meta.json")
+    limit = requests.get("https://s3-ap-southeast-1.amazonaws.com/rblwg2/images/meta.json")
     limit  = json.loads(limit.text)['image_count']
     image_ids = list(range(1, int(limit)+1))
     list_image_random_ids = random.sample(set(image_ids), 2)
     image_1 = list_image_random_ids[0]
     image_2 = list_image_random_ids[1]
-    image_1 = "https://s3-ap-southeast-1.amazonaws.com/rblwg/images/image" + '{:05d}'.format(image_1) + ".jpg"
-    image_2 = "https://s3-ap-southeast-1.amazonaws.com/rblwg/images/image" + '{:05d}'.format(image_2) + ".jpg"
-    image_1 = "http://edge.zimage.io/?url=" + image_1 + "&w=600"
-    image_2 = "http://edge.zimage.io/?url=" + image_2 + "&w=600"
+    image_1 = "https://s3-ap-southeast-1.amazonaws.com/rblwg2/images/image_" + '{:05d}'.format(image_1) + ".jpg"
+    image_2 = "https://s3-ap-southeast-1.amazonaws.com/rblwg2/images/image_" + '{:05d}'.format(image_2) + ".jpg"
+    #image_1 = "http://edge.zimage.io/?url=" + image_1 + "&w=600"
+    #image_2 = "http://edge.zimage.io/?url=" + image_2 + "&w=600"
     #image_1 = "http://s3-ap-southeast-1.amazonaws.com.rsz.io/rblwg/images/image" + '{:05d}'.format(image_1) + ".jpg?width=600"
     #image_2 = "http://s3-ap-southeast-1.amazonaws.com.rsz.io/rblwg/images/image" + '{:05d}'.format(image_2) + ".jpg?width=600"
 
