@@ -145,12 +145,14 @@ def send_pw_reset_email(email):
 ########### VIEWS ###############
 
 #TO-DO: Disable flush on deployment server.
+"""
 @app.route('/flush')
 def flushing():
     db.reflect()
     db.drop_all()
     db.create_all()
     return 'OMG db has been flushed!'
+"""
 
 
 @app.route('/')
