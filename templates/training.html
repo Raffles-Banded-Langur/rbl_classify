@@ -1,0 +1,38 @@
+{% extends "layout.html" %}
+{% block content %}
+    
+    <p class="lead small">It is currently {{ time }}.</p>
+
+    <img src="{{ url_for('static', filename=image_1 + '.jpg') }}" height="300" width="300" class=""/>
+    <img src="{{ url_for('static', filename=image_2 + '.jpg') }}" height="300" width="300" class=""/>
+    
+    <br/>
+    <br/>
+
+    <p class="lead">Are these two photos of the same langur? </p>
+
+    {% for opt in options %}
+      <input type="button" class="btn btn-light" value="{{opt}}" onclick="document.getElementById('answer').innerHTML = '{{image_1|safe}}'[0]=='{{image_2|safe}}'[0] ? 'They are same Languar!' : 'They are Different Langurs';">
+    {% endfor %}
+
+    <br/>
+    <br/>
+
+    <p class="btn btn-primary" id="answer">And the Answer Is...</p>
+
+    <br/>
+    <br/>
+
+    <div>
+      <a href="{{ url_for('training') }}"> <input type="button" class="btn btn-info btn-block bigger" value="Next Training Picture"> </a>
+    </div>
+
+    <br/>
+
+    <div>
+      <a href="{{ url_for('classify') }}"> <input type="button" class="btn btn-success btn-block bigger" value="I'm ready to start classifying!"> </a>
+    </div>
+    {% for message in get_flashed_messages() %}
+          {{message}}
+    {% endfor %}
+{% endblock %}
