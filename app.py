@@ -13,8 +13,8 @@ from itsdangerous import URLSafeTimedSerializer
 ########### SETUP & CONFIG ###############
 app = Flask(__name__)
 bcrypt = Bcrypt(app)
-app.config['SECRET_KEY'] = 'my precious'
-app.config['SECURITY_PASSWORD_SALT'] = 'Do. Or do not. There is no try.'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', "abccccc")
+app.config['SECURITY_PASSWORD_SALT'] = os.environ.get('SECURITY_PASSWORD_SALT', "abccccc")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 url = os.environ.get('DATABASE_URL', None)
