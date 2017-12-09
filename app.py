@@ -2,15 +2,19 @@ import random, os
 import traceback
 import json
 import requests
-from flask import Flask, redirect, url_for, render_template, request, session, flash
+import re
+from flask import Flask, redirect, url_for, render_template, request, session, flash, Markup
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
-from sqlalchemy import exc, func
+from flask_mail import Mail, Message
+from itsdangerous import URLSafeTimedSerializer
 
+########### SETUP & CONFIG ###############
 app = Flask(__name__)
 bcrypt = Bcrypt(app)
-app.secret_key = 'my precious'
+app.config['SECRET_KEY'] = 'my precious'
+app.config['SECURITY_PASSWORD_SALT'] = 'Do. Or do not. There is no try.'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 url = os.environ.get('DATABASE_URL', None)
@@ -22,12 +26,20 @@ else:
 db = SQLAlchemy(app)
 db.create_all()
 
-@app.route('/flush')
-def flushing():
-    db.reflect()
-    db.drop_all()
-    db.create_all()
-    return 'OMG db has been flushed!'
+app.config.update(
+	DEBUG=True,
+	#EMAIL SETTINGS
+	MAIL_SERVER='smtp.gmail.com',
+	MAIL_PORT=465,
+	MAIL_USE_SSL=True,
+# gmail authentication
+    MAIL_USERNAME = os.environ['APP_MAIL_USERNAME'],
+    MAIL_PASSWORD = os.environ['APP_MAIL_PASSWORD'],
+    MAIL_DEFAULT_SENDER = os.environ['APP_MAIL_USERNAME']+'@gmail.com'
+	)
+mail = Mail(app)
+
+########### MODELS ###############
 
 class Match(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -51,8 +63,9 @@ class User(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String, nullable=False)
-    email = db.Column(db.String, nullable=False)
+    email = db.Column(db.String, unique = True, nullable=False)
     password = db.Column(db.String, nullable=False)
+    confirmed = db.Column(db.Boolean, nullable=False, default=False)
     classifications = db.relationship('Match', backref='users', lazy=True)
 
     def __init__(self, name, email, password):
@@ -62,6 +75,83 @@ class User(db.Model):
 
     def __repr__(self):
         return '<name {}'.format(self.name)
+
+
+########### HELPER FUNCTIONS ###############
+
+def verify_email(email):
+    """Validate the email address using a regex."""
+    if not re.match("[^@]+@[^@]+\.[^@]+", email):
+        return False
+    return True
+
+def verify_password(password,confirm_password):
+    if password == confirm_password:
+        return True
+    return False
+
+def generate_confirmation_token(email):
+    serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
+    return serializer.dumps(email, salt=app.config['SECURITY_PASSWORD_SALT'])
+
+def confirm_token(token, expiration=3600):
+    serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
+    try:
+        email = serializer.loads(
+            token,
+            salt=app.config['SECURITY_PASSWORD_SALT'],
+            max_age=expiration
+        )
+    except:
+        return False
+    return email
+
+def send_email(to, subject, template):
+    try:
+        msg = Message(
+            subject,
+            recipients=[to],
+            html=template,
+            sender=app.config['MAIL_DEFAULT_SENDER']
+        )
+        mail.send(msg)
+    except:
+        return False
+    return True
+
+def send_confirmation_email(email):
+    try:
+        token = generate_confirmation_token(email)
+        confirm_url = url_for('confirm_email', token=token, _external=True)
+        html = render_template('confirm_email.html', confirm_url=confirm_url)
+        subject = "Please confirm your email"
+        return send_email(email, subject, html)
+    except:
+        return False
+    return True
+
+def send_pw_reset_email(email):
+    try:
+        token = generate_confirmation_token(email)
+        confirm_url = url_for('reset_password', token=token, _external=True)
+        html = render_template('forgotpw_email.html', confirm_url=confirm_url)
+        subject = "Reset Password"
+        return send_email(email, subject, html)
+    except:
+        return False
+    return True
+
+
+########### VIEWS ###############
+
+#TO-DO: Disable flush on deployment server.
+@app.route('/flush')
+def flushing():
+    db.reflect()
+    db.drop_all()
+    db.create_all()
+    return 'OMG db has been flushed!'
+
 
 @app.route('/')
 def homepage():
@@ -78,9 +168,16 @@ def login():
         user = User.query.filter_by(name=request.form['username']).first()
         if user is not None and bcrypt.check_password_hash(
                 user.password, request.form['password']):
-            session['logged_in'] = True
-            session['username'] = request.form['username']
-            return redirect(url_for('training'))
+
+            if user.confirmed == True:
+                session['resend_confirmation_email'] = False
+                session['logged_in'] = True
+                session['username'] = request.form['username']
+                return redirect(url_for('training'))
+            else:
+                session['resend_confirmation_email'] = True
+                session['username'] = request.form['username']
+                flash('You have not confirmed your email yet! Please check your inbox to login.',"error")
         else:
             error = 'Invalid Credentials. Please try again.'
     return render_template('login.html', error=error)
@@ -97,23 +194,102 @@ def logout():
 def signup():
     error = None
     if request.method == 'POST':
-        
-        if User.query.filter_by(email=request.form['email']).first() is None and \
+        if request.form['username'] == '' or request.form['password'] == '' or \
+            request.form['email'] == '' or request.form['confirm_password'] == '':
+            flash('Please fill all the fields!','error')
+        elif not verify_password(request.form['password'], request.form['confirm_password']):
+            flash('Password doesn\'t match! Try again!', 'error')
+        elif not verify_email(request.form['email']):
+            flash('Invalid email address. Please enter a valid email address!', 'error')
+        elif User.query.filter_by(email=request.form['email']).first() is None and \
             User.query.filter_by(name=request.form['username']).first() is None:
 
             new_user = User(request.form['username'],request.form['email'], request.form['password'])
             db.session.add(new_user)
             db.session.commit()
-            session['logged_in'] = True
-            session['username'] = request.form['username']
-            return redirect(url_for('training'))
+
+            if send_confirmation_email(request.form['email'])==True:
+                flash('A confirmation email has been sent via email.', 'success')
+            else:
+                flash('Oops! Something went wrong. Please check your email address and try again!', 'error')
+                db.session.rollback()
+            return redirect(url_for('login'))
         else:
             db.session.rollback()
-            flash('Oops! Username ' + request.form['username'] + ' or Email ' + request.form['username'] \
+            flash('Oops! Username ' + request.form['username'] + ' or Email ' + request.form['email'] \
              + ' already exists!', 'error')
     else:
         error = 'Invalid Credentials. Please try again.'
     return render_template('signup.html')
+
+
+
+@app.route("/confirm_email/<token>")
+def confirm_email(token):
+    try:
+        email = confirm_token(token)
+    except:
+        flash('The confirmation link is invalid or has expired.', 'danger')
+    user = User.query.filter_by(email=email).first_or_404()
+    if user.confirmed:
+        flash('Account already confirmed. Please login to continue.', 'success')
+    else:
+        user.confirmed = True
+        db.session.add(user)
+        db.session.commit()
+        flash('You have confirmed your account. Please login to continue.', 'success')
+    return redirect(url_for('login'))
+
+
+@app.route("/resend_confirmation")
+def resend_confirmation():
+    user = User.query.filter_by(name=session['username']).first()
+    if user is not None:
+        send_confirmation_email(user.email)
+        flash('The confirmation email has been sent again. Please check your inbox', 'success')
+    return redirect(url_for('homepage'))
+
+@app.route("/forgot_password", methods=['GET', 'POST'])
+def forgot_password():
+    if request.method == 'POST':
+        if not verify_email(request.form['email']):
+            flash("Please enter a valid email address.","error")
+        else:
+            user = User.query.filter_by(email=request.form['email']).first()
+            if user is not None:
+                send_pw_reset_email(user.email)
+                flash('A link to reset your password has been sent to your email.', 'success')
+                redirect(url_for('homepage'))
+            else:
+                flash('There is no account associated with this email address!','error')
+    return render_template('forgot_password.html')
+
+@app.route("/reset_password/<token>", methods=['GET', 'POST'])
+def reset_password(token):
+    if request.method == 'GET':
+        try:
+            email = confirm_token(token)
+        except:
+            flash('The confirmation link is invalid or has expired.', 'danger')
+        user = User.query.filter_by(email=email).first_or_404()
+        session['email'] = user.email
+    if request.method == 'POST':
+        if request.form['password'] == '' or request.form['confirm_password'] == '':
+            flash('Please fill all the fields!', 'error')
+        elif not verify_password(request.form['password'], request.form['confirm_password']):
+            flash('Password doesn\'t match! Try again!', 'danger')
+        else:
+            user = User.query.filter_by(email=session.get('email')).first_or_404()
+            if user is not None:
+                user.password = bcrypt.generate_password_hash(request.form['password'])
+                db.session.add(user)
+                db.session.commit()
+                session.pop('email',None)
+                flash('Your password has been reset! Please login to continue.', 'success')
+                return redirect(url_for('login'))
+            else:
+                flash('The confirmation link is invalid or has expired.', 'danger')
+    return render_template('reset_password.html')
 
 @app.route("/leaderboard")
 def leaderboard():
@@ -172,9 +348,10 @@ def classify():
     # Gather Image Limits
     limit = requests.get("https://s3-ap-southeast-1.amazonaws.com/rblwg/images/meta.json")
     limit  = json.loads(limit.text)['image_count']
-    image_ids = list(range(1, int(limit)))
-    image_1 = random.choice(image_ids)
-    image_2 = random.choice([x for x in image_ids if x != image_1])
+    image_ids = list(range(1, int(limit)+1))
+    list_image_random_ids = random.sample(set(image_ids), 2)
+    image_1 = list_image_random_ids[0]
+    image_2 = list_image_random_ids[1]
     image_1 = "https://s3-ap-southeast-1.amazonaws.com/rblwg/images/image" + '{:05d}'.format(image_1) + ".jpg"
     image_2 = "https://s3-ap-southeast-1.amazonaws.com/rblwg/images/image" + '{:05d}'.format(image_2) + ".jpg"
     image_1 = "http://edge.zimage.io/?url=" + image_1 + "&w=600"
